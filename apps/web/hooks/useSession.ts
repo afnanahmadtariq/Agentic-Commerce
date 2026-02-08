@@ -30,7 +30,8 @@ export function useSession(sessionId: string) {
             const { data } = await api.get<Session>(`/sessions/${sessionId}`);
             return data;
         },
-        refetchInterval: (data) => {
+        refetchInterval: (query) => {
+            const data = query.state.data;
             if (!data) return false;
             // Poll faster during active processing
             if (['DISCOVERING', 'RANKING', 'CHECKOUT'].includes(data.status)) {

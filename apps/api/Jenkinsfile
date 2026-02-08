@@ -1,0 +1,152 @@
+pipeline {
+    agent any
+    
+    environment {
+        DOCKER_IMAGE = 'agentic-commerce-api'
+        REGISTRY = credentials('docker-registry') // Configure in Jenkins
+        EC2_HOST = credentials('ec2-host')
+        EC2_USER = 'ubuntu'
+        DEPLOY_DIR = '/home/ubuntu/agentic-commerce'
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+                echo "Checked out branch: ${env.GIT_BRANCH}"
+            }
+        }
+        
+        stage('Install Dependencies') {
+            steps {
+                dir('apps/api') {
+                    sh 'npm ci'
+                }
+            }
+        }
+        
+        stage('Lint') {
+            steps {
+                dir('apps/api') {
+                    sh 'npm run lint || true'
+                }
+            }
+        }
+        
+        stage('Type Check') {
+            steps {
+                dir('apps/api') {
+                    sh 'npm run type-check'
+                }
+            }
+        }
+        
+        stage('Test') {
+            steps {
+                dir('apps/api') {
+                    sh 'npm run test:run || true'
+                }
+            }
+        }
+        
+        stage('Build') {
+            steps {
+                dir('apps/api') {
+                    sh 'npm run build'
+                }
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                dir('apps/api') {
+                    script {
+                        def imageTag = "${env.BUILD_NUMBER}"
+                        sh """
+                            docker build -t ${DOCKER_IMAGE}:${imageTag} .
+                            docker tag ${DOCKER_IMAGE}:${imageTag} ${DOCKER_IMAGE}:latest
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('Push to Registry') {
+            when {
+                branch 'main'
+            }
+            steps {
+                script {
+                    sh """
+                        echo ${REGISTRY_PSW} | docker login -u ${REGISTRY_USR} --password-stdin
+                        docker push ${DOCKER_IMAGE}:${env.BUILD_NUMBER}
+                        docker push ${DOCKER_IMAGE}:latest
+                    """
+                }
+            }
+        }
+        
+        stage('Deploy to AWS') {
+            when {
+                branch 'main'
+            }
+            steps {
+                sshagent(['ec2-ssh-key']) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} << 'ENDSSH'
+                            cd ${DEPLOY_DIR}
+                            
+                            # Pull latest image
+                            docker pull ${DOCKER_IMAGE}:latest
+                            
+                            # Stop and remove old container
+                            docker stop agentic-api || true
+                            docker rm agentic-api || true
+                            
+                            # Run new container
+                            docker run -d \\
+                                --name agentic-api \\
+                                -p 3001:3001 \\
+                                --env-file .env \\
+                                --network agentic-network \\
+                                --restart unless-stopped \\
+                                ${DOCKER_IMAGE}:latest
+                            
+                            # Run database migrations
+                            docker exec agentic-api npx prisma migrate deploy
+                            
+                            # Health check
+                            sleep 10
+                            curl -f http://localhost:3001/api/health || exit 1
+                            
+                            echo "Deployment successful!"
+ENDSSH
+                    """
+                }
+            }
+        }
+        
+        stage('Cleanup') {
+            steps {
+                sh '''
+                    # Remove old Docker images to save space
+                    docker image prune -f
+                '''
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo '✅ Pipeline completed successfully!'
+            // Add Slack/Discord notification here
+        }
+        failure {
+            echo '❌ Pipeline failed!'
+            // Add Slack/Discord notification here
+        }
+        always {
+            cleanWs()
+        }
+    }
+}

@@ -1,0 +1,206 @@
+// Prisma Schema for Agentic Commerce
+// https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// SESSION & SHOPPING SPEC
+// ============================================
+
+model Session {
+  id           String        @id @default(cuid())
+  status       SessionStatus @default(BRIEFING)
+  shoppingSpec Json?         // Structured shopping specification
+  userId       String?       // Optional user association
+  
+  // Relations
+  carts        Cart[]
+  checkouts    Checkout[]
+  
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  
+  @@index([status])
+  @@index([userId])
+}
+
+enum SessionStatus {
+  BRIEFING      // User is providing requirements
+  DISCOVERING   // Agent is searching products
+  RANKING       // Agent is ranking options
+  CART          // User is reviewing cart
+  CHECKOUT      // Simulated checkout in progress
+  COMPLETE      // Session finished
+  FAILED        // Session failed
+}
+
+// ============================================
+// RETAILERS & PRODUCTS
+// ============================================
+
+model Retailer {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  slug        String    @unique
+  logoUrl     String?
+  baseUrl     String?
+  isActive    Boolean   @default(true)
+  
+  // Relations
+  products    Product[]
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Product {
+  id              String          @id @default(cuid())
+  externalId      String          // Retailer's product ID
+  name            String
+  description     String?
+  category        String
+  price           Decimal         @db.Decimal(10, 2)
+  currency        String          @default("USD")
+  imageUrl        String?
+  productUrl      String?
+  inStock         Boolean         @default(true)
+  deliveryDays    Int             @default(5)
+  metadata        Json?           // Additional product data
+  
+  // Relations
+  retailer        Retailer        @relation(fields: [retailerId], references: [id])
+  retailerId      String
+  variants        ProductVariant[]
+  cartItems       CartItem[]
+  
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  
+  @@unique([retailerId, externalId])
+  @@index([category])
+  @@index([retailerId])
+}
+
+model ProductVariant {
+  id          String     @id @default(cuid())
+  sku         String?
+  size        String?
+  color       String?
+  material    String?
+  price       Decimal?   @db.Decimal(10, 2) // Override product price if different
+  inStock     Boolean    @default(true)
+  stockCount  Int?
+  
+  // Relations
+  product     Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId   String
+  cartItems   CartItem[]
+  
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  
+  @@index([productId])
+}
+
+// ============================================
+// CART & CART ITEMS
+// ============================================
+
+model Cart {
+  id              String      @id @default(cuid())
+  name            String?     // e.g., "Budget Option", "Fast Delivery"
+  totalCost       Decimal     @db.Decimal(10, 2) @default(0)
+  score           Float       @default(0)  // Ranking score
+  explanation     String?     // Why this cart ranked this way
+  isSelected      Boolean     @default(false)
+  deliveryDate    DateTime?
+  
+  // Relations
+  session         Session     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sessionId       String
+  items           CartItem[]
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  @@index([sessionId])
+}
+
+model CartItem {
+  id          String          @id @default(cuid())
+  quantity    Int             @default(1)
+  unitPrice   Decimal         @db.Decimal(10, 2)
+  totalPrice  Decimal         @db.Decimal(10, 2)
+  
+  // Relations
+  cart        Cart            @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  cartId      String
+  product     Product         @relation(fields: [productId], references: [id])
+  productId   String
+  variant     ProductVariant? @relation(fields: [variantId], references: [id])
+  variantId   String?
+  
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  
+  @@index([cartId])
+  @@index([productId])
+}
+
+// ============================================
+// CHECKOUT SIMULATION
+// ============================================
+
+model Checkout {
+  id              String          @id @default(cuid())
+  status          CheckoutStatus  @default(PENDING)
+  
+  // Simulated customer info (no real PII)
+  shippingAddress Json?
+  paymentMethod   Json?           // Simulated payment details
+  
+  totalAmount     Decimal         @db.Decimal(10, 2) @default(0)
+  retailerOrders  Json?           // Breakdown per retailer
+  
+  // Relations
+  session         Session         @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sessionId       String
+  
+  startedAt       DateTime        @default(now())
+  completedAt     DateTime?
+  
+  @@index([sessionId])
+  @@index([status])
+}
+
+enum CheckoutStatus {
+  PENDING         // Not started
+  PROCESSING      // Filling forms
+  FANOUT          // Sending to retailers
+  CONFIRMING      // Confirming orders
+  COMPLETE        // All orders placed
+  FAILED          // Checkout failed
+}
+
+// ============================================
+// ANALYTICS & METRICS
+// ============================================
+
+model SessionEvent {
+  id          String    @id @default(cuid())
+  sessionId   String
+  eventType   String    // e.g., "brief_submitted", "cart_modified"
+  eventData   Json?
+  timestamp   DateTime  @default(now())
+  
+  @@index([sessionId])
+  @@index([eventType])
+  @@index([timestamp])
+}

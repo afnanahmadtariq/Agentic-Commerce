@@ -2,7 +2,10 @@ import { prisma } from '../../config/index.js';
 import { SearchProductsInput } from '../../schemas/index.js';
 import { DiscoveryResult, ProductWithRetailer } from '../../types/index.js';
 
-// Mock retailer adapters - will be replaced with real API calls
+// Real-time Google Shopping adapter
+import { googleShoppingAdapter } from './adapters/google-shopping.js';
+
+// Mock retailer adapters - fallback when real APIs are not configured
 import { mockRetailerA } from './adapters/retailer-a.js';
 import { mockRetailerB } from './adapters/retailer-b.js';
 import { mockRetailerC } from './adapters/retailer-c.js';
@@ -22,11 +25,10 @@ export interface SearchFilters {
 }
 
 export class DiscoveryService {
-    private adapters: RetailerAdapter[] = [
-        mockRetailerA,
-        mockRetailerB,
-        mockRetailerC,
-    ];
+    // Use Google Shopping for real data, fall back to mock adapters if not configured
+    private adapters: RetailerAdapter[] = process.env.SERPAPI_KEY || process.env.GOOGLE_SEARCH_API_KEY
+        ? [googleShoppingAdapter]  // Use real data when API keys are available
+        : [mockRetailerA, mockRetailerB, mockRetailerC];  // Fallback to mock data
 
     async searchProducts(input: SearchProductsInput): Promise<DiscoveryResult> {
         const startTime = Date.now();
